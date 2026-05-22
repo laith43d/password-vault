@@ -170,6 +170,47 @@ export async function createUser(email: string, name: string, password: string, 
 	});
 }
 
+export async function updateUser(input: {
+	id: string;
+	email: string;
+	name: string;
+	password?: string;
+	isSuperuser: boolean;
+}) {
+	await ensureDb();
+	if (input.password) {
+		await client.execute({
+			sql: 'UPDATE users SET email = ?, name = ?, password_hash = ?, is_superuser = ? WHERE id = ?',
+			args: [
+				input.email,
+				input.name,
+				await hashPassword(input.password),
+				input.isSuperuser ? 1 : 0,
+				input.id
+			]
+		});
+		return;
+	}
+
+	await client.execute({
+		sql: 'UPDATE users SET email = ?, name = ?, is_superuser = ? WHERE id = ?',
+		args: [input.email, input.name, input.isSuperuser ? 1 : 0, input.id]
+	});
+}
+
+export async function deleteUser(userId: string) {
+	await ensureDb();
+	await client.batch(
+		[
+			{ sql: 'DELETE FROM sessions WHERE user_id = ?', args: [userId] },
+			{ sql: 'DELETE FROM group_members WHERE user_id = ?', args: [userId] },
+			{ sql: 'DELETE FROM item_user_access WHERE user_id = ?', args: [userId] },
+			{ sql: 'DELETE FROM users WHERE id = ?', args: [userId] }
+		],
+		'write'
+	);
+}
+
 export async function listGroups() {
 	await ensureDb();
 	const result = await client.execute('SELECT id, name FROM groups ORDER BY name');
@@ -179,6 +220,23 @@ export async function listGroups() {
 export async function createGroup(name: string) {
 	await ensureDb();
 	await client.execute({ sql: 'INSERT INTO groups (id, name) VALUES (?, ?)', args: [crypto.randomUUID(), name] });
+}
+
+export async function updateGroup(groupId: string, name: string) {
+	await ensureDb();
+	await client.execute({ sql: 'UPDATE groups SET name = ? WHERE id = ?', args: [name, groupId] });
+}
+
+export async function deleteGroup(groupId: string) {
+	await ensureDb();
+	await client.batch(
+		[
+			{ sql: 'DELETE FROM group_members WHERE group_id = ?', args: [groupId] },
+			{ sql: 'DELETE FROM item_group_access WHERE group_id = ?', args: [groupId] },
+			{ sql: 'DELETE FROM groups WHERE id = ?', args: [groupId] }
+		],
+		'write'
+	);
 }
 
 export async function setGroupMember(userId: string, groupId: string, enabled: boolean) {

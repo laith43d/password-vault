@@ -44,10 +44,21 @@
 			<div class="grid gap-3 sm:grid-cols-2">
 				{#each data.groups as group}
 					<article class="border border-foreground bg-background p-4 shadow-[4px_4px_0_var(--foreground)]">
-						<h3 class="font-black">{group.name}</h3>
+						<form method="POST" action="?/updateGroup" class="flex gap-2">
+							<input type="hidden" name="id" value={group.id} />
+							<Input name="name" value={group.name} aria-label="Group name" required />
+							<Button type="submit" size="sm">Save</Button>
+						</form>
+						<form method="POST" action="?/deleteGroup" class="mt-3">
+							<input type="hidden" name="id" value={group.id} />
+							<Button type="submit" variant="destructive" size="sm">Delete group</Button>
+						</form>
 					</article>
 				{/each}
 			</div>
+			{#if form?.groupUpdateMissing}
+				<p class="text-sm text-destructive">Group name is required.</p>
+			{/if}
 			{#if data.groups.length === 0}
 				<div class="border border-dashed border-foreground bg-background p-10 text-center">
 					<p class="font-bold">No role groups yet.</p>

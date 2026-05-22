@@ -54,6 +54,20 @@
 							{#if user.isSuperuser}<Badge>Superuser</Badge>{/if}
 						</div>
 
+						<form method="POST" action="?/updateUser" class="mb-4 grid gap-2 border border-border p-3 lg:grid-cols-[1fr_1fr_1fr_auto]">
+							<input type="hidden" name="id" value={user.id} />
+							<Input name="name" value={user.name} aria-label="Name" required />
+							<Input name="email" type="email" value={user.email} aria-label="Email" required />
+							<Input name="password" type="password" placeholder="New password optional" aria-label="New password" />
+							<div class="flex items-center gap-2">
+								<label class="flex items-center gap-2 text-sm font-medium">
+									<input class="size-4 accent-foreground" type="checkbox" name="isSuperuser" checked={user.isSuperuser} />
+									Admin
+								</label>
+								<Button type="submit" size="sm">Save</Button>
+							</div>
+						</form>
+
 						<div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
 							{#each data.groups as group}
 								<form method="POST" action="?/setMember" class="flex items-center gap-2 border border-border p-2">
@@ -67,9 +81,20 @@
 						{#if data.groups.length === 0}
 							<p class="text-sm text-muted-foreground">Create role groups before assigning memberships.</p>
 						{/if}
+
+						<form method="POST" action="?/deleteUser" class="mt-4">
+							<input type="hidden" name="id" value={user.id} />
+							<Button type="submit" variant="destructive" size="sm" disabled={user.id === data.user?.id}>Delete user</Button>
+						</form>
 					</article>
 				{/each}
 			</div>
+			{#if form?.cannotDeleteSelf}
+				<p class="text-sm text-destructive">You cannot delete your own user.</p>
+			{/if}
+			{#if form?.cannotDemoteSelf}
+				<p class="text-sm text-destructive">You cannot remove your own superuser access.</p>
+			{/if}
 		</section>
 	</div>
 </main>
