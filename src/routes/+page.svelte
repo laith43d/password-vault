@@ -37,6 +37,10 @@
 				<h1 class="text-2xl font-black">Team access console</h1>
 			</div>
 			<div class="flex items-center gap-3">
+				{#if data.user?.isSuperuser}
+					<Button href="/users" variant="ghost" size="sm">Users</Button>
+					<Button href="/groups" variant="ghost" size="sm">Groups</Button>
+				{/if}
 				<Badge variant="secondary">{data.user?.name}</Badge>
 				<form method="POST" action="/logout">
 					<Button variant="outline" size="sm" type="submit">Log out</Button>
@@ -79,37 +83,10 @@
 
 			{#if data.user?.isSuperuser}
 				<section class="border border-foreground bg-background p-4">
-					<h2 class="mb-4 text-lg font-black">Invite user</h2>
-					<form method="POST" action="?/createUser" class="space-y-3">
-						<Input name="name" placeholder="Name" required />
-						<Input name="email" type="email" placeholder="Email" required />
-						<Input name="password" type="password" placeholder="Temporary password" required />
-						<Button type="submit" variant="secondary" class="w-full">Create user</Button>
-					</form>
-				</section>
-
-				<section class="border border-foreground bg-background p-4">
-					<h2 class="mb-4 text-lg font-black">Role groups</h2>
-					<form method="POST" action="?/createGroup" class="mb-4 flex gap-2">
-						<Input name="name" placeholder="Backend, Mobile..." required />
-						<Button type="submit" variant="secondary">Add</Button>
-					</form>
-					<div class="space-y-3">
-						{#each data.groups as group}
-							<div class="border border-border p-3">
-								<p class="mb-2 font-bold">{group.name}</p>
-								<div class="space-y-2">
-									{#each data.users as user}
-										<form method="POST" action="?/setMember" class="flex items-center gap-2">
-											<input type="hidden" name="userId" value={user.id} />
-											<input type="hidden" name="groupId" value={group.id} />
-											<input class="size-4 accent-foreground" type="checkbox" name="enabled" checked={user.groupIds.includes(group.id)} onchange={(event) => event.currentTarget.form?.requestSubmit()} />
-											<span class="text-sm">{user.name}</span>
-										</form>
-									{/each}
-								</div>
-							</div>
-						{/each}
+					<h2 class="mb-2 text-lg font-black">Administration</h2>
+					<div class="grid gap-2">
+						<Button href="/users" variant="secondary">Manage users</Button>
+						<Button href="/groups" variant="outline">Manage role groups</Button>
 					</div>
 				</section>
 			{/if}
