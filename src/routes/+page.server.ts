@@ -22,6 +22,7 @@ export const load = async ({ locals }) => {
 export const actions = {
 	createItem: async ({ locals, request }) => {
 		if (!locals.user) throw redirect(303, '/login');
+		if (!locals.user.isSuperuser) return fail(403, { denied: true });
 		const data = await request.formData();
 		const title = String(data.get('title') ?? '').trim();
 		const username = String(data.get('username') ?? '').trim();

@@ -106,37 +106,37 @@
 
 	<div class="mx-auto grid max-w-7xl gap-5 px-4 py-5 lg:grid-cols-[360px_1fr]">
 		<aside class="space-y-5">
-			<section class="border border-foreground bg-background p-4 shadow-[5px_5px_0_var(--foreground)]">
-				<h2 class="mb-4 text-lg font-black">Add password</h2>
-				<form method="POST" action="?/createItem" class="space-y-3">
-					<div class="space-y-1.5">
-						<Label for="title">Title</Label>
-						<Input id="title" name="title" required />
-					</div>
-					<div class="space-y-1.5">
-						<Label for="username">Username</Label>
-						<Input id="username" name="username" required />
-					</div>
-					<div class="space-y-1.5">
-						<Label for="password">Password</Label>
-						<Input id="password" name="password" type="password" required />
-					</div>
-					<div class="space-y-1.5">
-						<Label for="url">URL</Label>
-						<Input id="url" name="url" />
-					</div>
-					<div class="space-y-1.5">
-						<Label for="notes">Notes</Label>
-						<Textarea id="notes" name="notes" rows={3} />
-					</div>
-					{#if form?.itemMissing}
-						<p class="text-sm text-destructive">Title, username, and password are required.</p>
-					{/if}
-					<Button type="submit" class="w-full">Save secret</Button>
-				</form>
-			</section>
-
 			{#if data.user?.isSuperuser}
+				<section class="border border-foreground bg-background p-4 shadow-[5px_5px_0_var(--foreground)]">
+					<h2 class="mb-4 text-lg font-black">Add password</h2>
+					<form method="POST" action="?/createItem" class="space-y-3">
+						<div class="space-y-1.5">
+							<Label for="title">Title</Label>
+							<Input id="title" name="title" required />
+						</div>
+						<div class="space-y-1.5">
+							<Label for="username">Username</Label>
+							<Input id="username" name="username" required />
+						</div>
+						<div class="space-y-1.5">
+							<Label for="password">Password</Label>
+							<Input id="password" name="password" type="password" required />
+						</div>
+						<div class="space-y-1.5">
+							<Label for="url">URL</Label>
+							<Input id="url" name="url" />
+						</div>
+						<div class="space-y-1.5">
+							<Label for="notes">Notes</Label>
+							<Textarea id="notes" name="notes" rows={3} />
+						</div>
+						{#if form?.itemMissing}
+							<p class="text-sm text-destructive">Title, username, and password are required.</p>
+						{/if}
+						<Button type="submit" class="w-full">Save secret</Button>
+					</form>
+				</section>
+
 				<section class="border border-foreground bg-background p-4">
 					<h2 class="mb-2 text-lg font-black">Administration</h2>
 					<div class="grid gap-2">
