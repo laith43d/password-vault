@@ -1,10 +1,12 @@
 import {
 	createVaultItem,
+	deleteVaultItem,
 	listGroups,
 	listUsers,
 	listVaultItems,
 	setItemGroupAccess,
-	setItemUserAccess
+	setItemUserAccess,
+	updateVaultItem
 } from '$lib/server/db';
 import { fail, redirect } from '@sveltejs/kit';
 
@@ -37,6 +39,32 @@ export const actions = {
 			notes: String(data.get('notes') ?? '').trim(),
 			createdBy: locals.user.id
 		});
+	},
+	updateItem: async ({ locals, request }) => {
+		if (!locals.user) throw redirect(303, '/login');
+		if (!locals.user.isSuperuser) return fail(403, { denied: true });
+		const data = await request.formData();
+		const id = String(data.get('id') ?? '');
+		const title = String(data.get('title') ?? '').trim();
+		const username = String(data.get('username') ?? '').trim();
+		const password = String(data.get('password') ?? '');
+		if (!id || !title || !username) return fail(400, { itemUpdateMissing: true });
+
+		await updateVaultItem({
+			id,
+			title,
+			username,
+			password: password || undefined,
+			url: String(data.get('url') ?? '').trim(),
+			notes: String(data.get('notes') ?? '').trim()
+		});
+	},
+	deleteItem: async ({ locals, request }) => {
+		if (!locals.user) throw redirect(303, '/login');
+		if (!locals.user.isSuperuser) return fail(403, { denied: true });
+		const id = String((await request.formData()).get('id') ?? '');
+		if (!id) return fail(400, { itemDeleteMissing: true });
+		await deleteVaultItem(id);
 	},
 	setAccess: async ({ locals, request }) => {
 		if (!locals.user?.isSuperuser) return fail(403, { denied: true });

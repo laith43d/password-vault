@@ -283,6 +283,55 @@ export async function createVaultItem(input: {
 	});
 }
 
+export async function updateVaultItem(input: {
+	id: string;
+	title: string;
+	username: string;
+	password?: string;
+	url: string;
+	notes: string;
+}) {
+	await ensureDb();
+	if (input.password) {
+		const sealed = await encryptSecret(input.password, encryptionKey);
+		await client.execute({
+			sql: `UPDATE vault_items
+				SET title = ?, username = ?, url = ?, notes = ?,
+					secret_ciphertext = ?, secret_iv = ?, secret_tag = ?, updated_at = ?
+				WHERE id = ?`,
+			args: [
+				input.title,
+				input.username,
+				input.url,
+				input.notes,
+				sealed.ciphertext,
+				sealed.iv,
+				sealed.tag,
+				new Date().toISOString(),
+				input.id
+			]
+		});
+		return;
+	}
+
+	await client.execute({
+		sql: 'UPDATE vault_items SET title = ?, username = ?, url = ?, notes = ?, updated_at = ? WHERE id = ?',
+		args: [input.title, input.username, input.url, input.notes, new Date().toISOString(), input.id]
+	});
+}
+
+export async function deleteVaultItem(itemId: string) {
+	await ensureDb();
+	await client.batch(
+		[
+			{ sql: 'DELETE FROM item_user_access WHERE item_id = ?', args: [itemId] },
+			{ sql: 'DELETE FROM item_group_access WHERE item_id = ?', args: [itemId] },
+			{ sql: 'DELETE FROM vault_items WHERE id = ?', args: [itemId] }
+		],
+		'write'
+	);
+}
+
 async function grantsForItem(itemId: string) {
 	const [users, groups] = await Promise.all([
 		client.execute({ sql: 'SELECT user_id FROM item_user_access WHERE item_id = ?', args: [itemId] }),

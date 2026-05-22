@@ -208,6 +208,23 @@
 						{/if}
 
 						{#if data.user?.isSuperuser}
+							<div class="mt-4 border-t border-border pt-4">
+								<p class="mb-2 text-sm font-bold">Edit password</p>
+								<form method="POST" action="?/updateItem" class="grid gap-2 lg:grid-cols-[1fr_1fr_1fr_1fr_auto]">
+									<input type="hidden" name="id" value={item.id} />
+									<Input name="title" value={item.title} aria-label="Title" required />
+									<Input name="username" value={item.username} aria-label="Username" required />
+									<Input name="password" type="password" placeholder="New password optional" aria-label="New password" />
+									<Input name="url" value={item.url} aria-label="URL" />
+									<Button type="submit" size="sm">Save</Button>
+									<Textarea class="lg:col-span-4" name="notes" rows={2} aria-label="Notes" value={item.notes} />
+								</form>
+								<form method="POST" action="?/deleteItem" class="mt-2">
+									<input type="hidden" name="id" value={item.id} />
+									<Button type="submit" variant="destructive" size="sm">Delete password</Button>
+								</form>
+							</div>
+
 							<div class="mt-4 grid gap-3 border-t border-border pt-4 md:grid-cols-2">
 								<div>
 									<p class="mb-2 text-sm font-bold">User access</p>
