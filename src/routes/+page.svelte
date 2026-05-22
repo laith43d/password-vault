@@ -30,14 +30,48 @@
 		revealed[id] = body.password;
 	}
 
-	async function copyValue(key: string, value: string) {
+	function copyWithSelection(value: string) {
+		const textarea = document.createElement('textarea');
+		textarea.value = value;
+		textarea.setAttribute('readonly', '');
+		textarea.style.position = 'fixed';
+		textarea.style.top = '-1000px';
+		textarea.style.left = '-1000px';
+		document.body.appendChild(textarea);
+		textarea.focus();
+		textarea.select();
+		textarea.setSelectionRange(0, textarea.value.length);
+
+		let copiedToClipboard = false;
 		try {
-			await navigator.clipboard?.writeText(value);
-			copied[key] = true;
-			setTimeout(() => {
-				copied[key] = false;
-			}, 1200);
-		} catch {
+			copiedToClipboard = document.execCommand('copy');
+		} finally {
+			document.body.removeChild(textarea);
+		}
+		return copiedToClipboard;
+	}
+
+	function markCopied(key: string) {
+		copied[key] = true;
+		setTimeout(() => {
+			copied[key] = false;
+		}, 1200);
+	}
+
+	function copyValue(key: string, value: string) {
+		const copiedBySelection = copyWithSelection(value);
+		if (copiedBySelection) markCopied(key);
+
+		navigator.clipboard
+			?.writeText(value)
+			.then(() => {
+				markCopied(key);
+			})
+			.catch(() => {
+				if (!copiedBySelection) copied[key] = false;
+			});
+
+		if (!navigator.clipboard && !copiedBySelection) {
 			copied[key] = false;
 		}
 	}
