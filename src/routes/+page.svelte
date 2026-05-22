@@ -4,10 +4,14 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { Textarea } from '$lib/components/ui/textarea';
+	import CheckIcon from '@lucide/svelte/icons/check';
+	import CopyIcon from '@lucide/svelte/icons/copy';
+	import ExternalLinkIcon from '@lucide/svelte/icons/external-link';
 
 	let { data, form } = $props();
 	let query = $state('');
 	let revealed = $state<Record<string, string>>({});
+	let copied = $state<Record<string, boolean>>({});
 
 	let filteredItems = $derived(
 		data.items.filter((item) =>
@@ -15,15 +19,32 @@
 		)
 	);
 
-	async function reveal(id: string) {
+	async function toggleReveal(id: string) {
+		if (revealed[id]) {
+			delete revealed[id];
+			return;
+		}
 		const response = await fetch(`/reveal/${id}`);
 		if (!response.ok) return;
 		const body = await response.json();
 		revealed[id] = body.password;
 	}
 
-	function copy(value: string) {
-		navigator.clipboard?.writeText(value);
+	async function copyValue(key: string, value: string) {
+		try {
+			await navigator.clipboard?.writeText(value);
+			copied[key] = true;
+			setTimeout(() => {
+				copied[key] = false;
+			}, 1200);
+		} catch {
+			copied[key] = false;
+		}
+	}
+
+	function normalizedUrl(url: string) {
+		if (!url) return '';
+		return /^https?:\/\//i.test(url) ? url : `https://${url}`;
 	}
 </script>
 
@@ -114,18 +135,42 @@
 						<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
 							<div>
 								<h3 class="text-lg font-black">{item.title}</h3>
-								<p class="text-sm text-muted-foreground">{item.username}{item.url ? ` · ${item.url}` : ''}</p>
+								<div class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+									<span>{item.username}</span>
+									{#if item.url}
+										<span>·</span>
+										<a class="inline-flex items-center gap-1 underline-offset-2 hover:underline" href={normalizedUrl(item.url)} target="_blank" rel="noreferrer">
+											{item.url}
+											<ExternalLinkIcon class="size-3.5" />
+										</a>
+										<Button variant="ghost" size="icon-xs" aria-label="Copy URL" title="Copy URL" onclick={() => copyValue(`url-${item.id}`, normalizedUrl(item.url))}>
+											{#if copied[`url-${item.id}`]}
+												<CheckIcon />
+											{:else}
+												<CopyIcon />
+											{/if}
+										</Button>
+									{/if}
+								</div>
 								{#if item.notes}<p class="mt-2 text-sm">{item.notes}</p>{/if}
 							</div>
 							<div class="flex gap-2">
-								<Button variant="outline" size="sm" onclick={() => reveal(item.id)}>Reveal</Button>
-								{#if revealed[item.id]}
-									<Button size="sm" onclick={() => copy(revealed[item.id])}>Copy</Button>
-								{/if}
+								<Button variant="outline" size="sm" onclick={() => toggleReveal(item.id)}>
+									{revealed[item.id] ? 'Hide' : 'Reveal'}
+								</Button>
 							</div>
 						</div>
 						{#if revealed[item.id]}
-							<div class="mt-3 border border-border bg-muted p-3 font-mono text-sm">{revealed[item.id]}</div>
+							<div class="mt-3 flex items-center justify-between gap-3 border border-border bg-muted p-3 font-mono text-sm">
+								<span class="min-w-0 break-all">{revealed[item.id]}</span>
+								<Button variant="ghost" size="icon-sm" aria-label="Copy password" title="Copy password" onclick={() => copyValue(`password-${item.id}`, revealed[item.id])}>
+									{#if copied[`password-${item.id}`]}
+										<CheckIcon />
+									{:else}
+										<CopyIcon />
+									{/if}
+								</Button>
+							</div>
 						{/if}
 
 						{#if data.user?.isSuperuser}
