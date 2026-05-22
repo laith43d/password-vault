@@ -3,7 +3,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 
-	let { data, form } = $props();
+	let { form } = $props();
 </script>
 
 <svelte:head><title>Login | Vault</title></svelte:head>
@@ -18,11 +18,11 @@
 		<form method="POST" class="space-y-4">
 			<div class="space-y-2">
 				<Label for="email">Email</Label>
-				<Input id="email" name="email" type="email" value={form?.email ?? data.demo.email} required />
+				<Input id="email" name="email" type="email" value={form?.email ?? ''} autocomplete="username" required />
 			</div>
 			<div class="space-y-2">
 				<Label for="password">Password</Label>
-				<Input id="password" name="password" type="password" value={data.demo.password} required />
+				<Input id="password" name="password" type="password" autocomplete="current-password" required />
 			</div>
 			{#if form?.invalid}
 				<p class="text-sm font-medium text-destructive">Invalid email or password.</p>
