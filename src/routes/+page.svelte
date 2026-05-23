@@ -13,11 +13,54 @@
 	let revealed = $state<Record<string, string>>({});
 	let copied = $state<Record<string, boolean>>({});
 	let editing = $state<Record<string, boolean>>({});
+	let selectedNodeId = $state('');
+	let editingNodeId = $state('');
+	let nodes = $derived(data.nodes ?? []);
 
+	$effect(() => {
+		if (!selectedNodeId && nodes[0]) selectedNodeId = nodes[0].id;
+	});
+
+	let nodesById = $derived(new Map(nodes.map((node) => [node.id, node])));
+	let nodeDepths = $derived.by(() => {
+		const depths: Record<string, number> = {};
+		const depthFor = (nodeId: string): number => {
+			if (depths[nodeId] !== undefined) return depths[nodeId];
+			const node = nodesById.get(nodeId);
+			if (!node?.parentId) return (depths[nodeId] = 0);
+			return (depths[nodeId] = depthFor(node.parentId) + 1);
+		};
+		for (const node of nodes) depthFor(node.id);
+		return depths;
+	});
+	let nodeOptions = $derived(
+		[...nodes].sort((left, right) => {
+			const depthDiff = (nodeDepths[left.id] ?? 0) - (nodeDepths[right.id] ?? 0);
+			if (left.parentId === right.parentId && depthDiff === 0) return left.name.localeCompare(right.name);
+			return depthDiff || left.name.localeCompare(right.name);
+		})
+	);
+	let selectedNodeIds = $derived.by(() => {
+		if (!selectedNodeId) return new Set<string>();
+		const ids = new Set([selectedNodeId]);
+		let changed = true;
+		while (changed) {
+			changed = false;
+			for (const node of nodes) {
+				if (node.parentId && ids.has(node.parentId) && !ids.has(node.id)) {
+					ids.add(node.id);
+					changed = true;
+				}
+			}
+		}
+		return ids;
+	});
 	let filteredItems = $derived(
-		data.items.filter((item) =>
-			`${item.title} ${item.username} ${item.url}`.toLowerCase().includes(query.toLowerCase())
-		)
+		data.items.filter((item) => {
+			const matchesQuery = `${item.title} ${item.username} ${item.url}`.toLowerCase().includes(query.toLowerCase());
+			const matchesNode = !selectedNodeId || selectedNodeIds.has(item.nodeId);
+			return matchesQuery && matchesNode;
+		})
 	);
 
 	async function toggleReveal(id: string) {
@@ -85,6 +128,10 @@
 	function toggleEdit(id: string) {
 		editing[id] = !editing[id];
 	}
+
+	function nodeLabel(node: { id: string; name: string }) {
+		return `${'-- '.repeat(nodeDepths[node.id] ?? 0)}${node.name}`;
+	}
 </script>
 
 <svelte:head><title>Vault</title></svelte:head>
@@ -128,6 +175,14 @@
 							<Input id="password" name="password" type="password" required />
 						</div>
 						<div class="space-y-1.5">
+							<Label for="nodeId">Hierarchy</Label>
+							<select id="nodeId" name="nodeId" required class="h-9 w-full border border-input bg-transparent px-3 text-sm">
+								{#each nodeOptions as node}
+									<option value={node.id}>{nodeLabel(node)}</option>
+								{/each}
+							</select>
+						</div>
+						<div class="space-y-1.5">
 							<Label for="url">URL</Label>
 							<Input id="url" name="url" />
 						</div>
@@ -140,6 +195,83 @@
 						{/if}
 						<Button type="submit" class="w-full">Save secret</Button>
 					</form>
+				</section>
+
+				<section class="border border-foreground bg-background p-4">
+					<h2 class="mb-2 text-lg font-black">Hierarchy</h2>
+					<form method="POST" action="?/createNode" class="mb-4 grid gap-2">
+						<Input name="name" placeholder="New node name" aria-label="New node name" required />
+						<select name="parentId" class="h-9 w-full border border-input bg-transparent px-3 text-sm" aria-label="Parent node">
+							<option value="">Top level</option>
+							{#each nodeOptions as node}
+								<option value={node.id}>{nodeLabel(node)}</option>
+							{/each}
+						</select>
+						<Button type="submit" size="sm">Create node</Button>
+					</form>
+					{#if form?.nodeCycle}
+						<p class="mb-2 text-sm text-destructive">Node cannot be moved under itself or its children.</p>
+					{/if}
+					{#if form?.nodeNotEmpty}
+						<p class="mb-2 text-sm text-destructive">Delete blocked: node has children or passwords.</p>
+					{/if}
+					<div class="space-y-3">
+						{#each nodeOptions as node}
+							<div class="border border-border p-2" style={`margin-left: ${(nodeDepths[node.id] ?? 0) * 12}px`}>
+								<div class="flex items-center justify-between gap-2">
+									<button class="text-left text-sm font-bold underline-offset-2 hover:underline" type="button" onclick={() => selectedNodeId = node.id}>
+										{node.name}
+									</button>
+									<Button type="button" variant="ghost" size="sm" onclick={() => editingNodeId = editingNodeId === node.id ? '' : node.id}>
+										{editingNodeId === node.id ? 'Close' : 'Edit'}
+									</Button>
+								</div>
+								{#if editingNodeId === node.id}
+									<form method="POST" action="?/updateNode" class="mt-2 grid gap-2">
+										<input type="hidden" name="id" value={node.id} />
+										<Input name="name" value={node.name} aria-label="Node name" required />
+										<select name="parentId" class="h-9 w-full border border-input bg-transparent px-3 text-sm" aria-label="Parent node">
+											<option value="">Top level</option>
+											{#each nodeOptions.filter((candidate) => candidate.id !== node.id) as candidate}
+												<option value={candidate.id} selected={candidate.id === node.parentId}>{nodeLabel(candidate)}</option>
+											{/each}
+										</select>
+										<Button type="submit" size="sm">Save node</Button>
+									</form>
+									<form method="POST" action="?/deleteNode" class="mt-2">
+										<input type="hidden" name="id" value={node.id} />
+										<Button type="submit" variant="destructive" size="sm">Delete empty node</Button>
+									</form>
+									<div class="mt-3 grid gap-3 border-t border-border pt-3">
+										<div>
+											<p class="mb-2 text-sm font-bold">Inherited user access</p>
+											{#each data.users as user}
+												<form method="POST" action="?/setNodeAccess" class="flex items-center gap-2">
+													<input type="hidden" name="nodeId" value={node.id} />
+													<input type="hidden" name="targetType" value="user" />
+													<input type="hidden" name="targetId" value={user.id} />
+													<input class="size-4 accent-foreground" type="checkbox" name="enabled" checked={node.access.userIds.includes(user.id)} onchange={(event) => event.currentTarget.form?.requestSubmit()} />
+													<span class="text-sm">{user.name}</span>
+												</form>
+											{/each}
+										</div>
+										<div>
+											<p class="mb-2 text-sm font-bold">Inherited group access</p>
+											{#each data.groups as group}
+												<form method="POST" action="?/setNodeAccess" class="flex items-center gap-2">
+													<input type="hidden" name="nodeId" value={node.id} />
+													<input type="hidden" name="targetType" value="group" />
+													<input type="hidden" name="targetId" value={group.id} />
+													<input class="size-4 accent-foreground" type="checkbox" name="enabled" checked={node.access.groupIds.includes(group.id)} onchange={(event) => event.currentTarget.form?.requestSubmit()} />
+													<span class="text-sm">{group.name}</span>
+												</form>
+											{/each}
+										</div>
+									</div>
+								{/if}
+							</div>
+						{/each}
+					</div>
 				</section>
 
 				<section class="border border-foreground bg-background p-4">
@@ -158,7 +290,14 @@
 					<h2 class="text-xl font-black">Passwords</h2>
 					<p class="text-sm text-muted-foreground">{filteredItems.length} visible</p>
 				</div>
-				<Input class="sm:max-w-xs" placeholder="Search vault" bind:value={query} />
+				<div class="flex flex-col gap-2 sm:flex-row">
+					<select bind:value={selectedNodeId} class="h-9 border border-input bg-background px-3 text-sm">
+						{#each nodeOptions as node}
+							<option value={node.id}>{nodeLabel(node)}</option>
+						{/each}
+					</select>
+					<Input class="sm:max-w-xs" placeholder="Search vault" bind:value={query} />
+				</div>
 			</div>
 
 			{#if filteredItems.length === 0}
@@ -228,6 +367,11 @@
 										<Input name="password" type="password" placeholder="New password optional" aria-label="New password" />
 										<Input name="url" value={item.url} aria-label="URL" />
 										<Button type="submit" size="sm">Save</Button>
+										<select name="nodeId" class="h-9 border border-input bg-transparent px-3 text-sm lg:col-span-2" aria-label="Hierarchy" required>
+											{#each nodeOptions as node}
+												<option value={node.id} selected={node.id === item.nodeId}>{nodeLabel(node)}</option>
+											{/each}
+										</select>
 										<Textarea class="lg:col-span-4" name="notes" rows={2} aria-label="Notes" value={item.notes} />
 									</form>
 									<form method="POST" action="?/deleteItem" class="mt-2">

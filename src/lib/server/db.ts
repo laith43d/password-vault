@@ -1,5 +1,11 @@
 import { createClient } from '@libsql/client';
-import { canAccessVaultItem, type VaultActor } from './access';
+import {
+	canAccessHierarchyNode,
+	canAccessVaultItem,
+	wouldCreateHierarchyCycle,
+	type HierarchyNodeAccess,
+	type VaultActor
+} from './access';
 import { decryptSecret, encryptSecret } from './crypto';
 import { databaseAuthToken, databaseUrl, encryptionKey, superuserEmail, superuserPassword } from './env';
 import { hashPassword, verifyPassword } from './passwords';
@@ -66,6 +72,23 @@ export async function initDb() {
 				created_by TEXT NOT NULL REFERENCES users(id),
 				updated_at TEXT NOT NULL
 			)`,
+			`CREATE TABLE IF NOT EXISTS hierarchy_nodes (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				parent_id TEXT REFERENCES hierarchy_nodes(id) ON DELETE RESTRICT,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)`,
+			`CREATE TABLE IF NOT EXISTS node_user_access (
+				node_id TEXT NOT NULL REFERENCES hierarchy_nodes(id) ON DELETE CASCADE,
+				user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				PRIMARY KEY (node_id, user_id)
+			)`,
+			`CREATE TABLE IF NOT EXISTS node_group_access (
+				node_id TEXT NOT NULL REFERENCES hierarchy_nodes(id) ON DELETE CASCADE,
+				group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+				PRIMARY KEY (node_id, group_id)
+			)`,
 			`CREATE TABLE IF NOT EXISTS item_user_access (
 				item_id TEXT NOT NULL REFERENCES vault_items(id) ON DELETE CASCADE,
 				user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -80,6 +103,12 @@ export async function initDb() {
 		'write'
 	);
 
+	try {
+		await client.execute('ALTER TABLE vault_items ADD COLUMN node_id TEXT REFERENCES hierarchy_nodes(id)');
+	} catch (error) {
+		if (!String(error).includes('duplicate column')) throw error;
+	}
+
 	await client.execute({
 		sql: `INSERT OR IGNORE INTO users (id, email, name, password_hash, is_superuser, created_at)
 			VALUES (?, ?, ?, ?, 1, ?)`,
@@ -91,6 +120,18 @@ export async function initDb() {
 			new Date().toISOString()
 		]
 	});
+
+	const root = await client.execute('SELECT id FROM hierarchy_nodes ORDER BY created_at LIMIT 1');
+	let rootId = asString(root.rows[0]?.id);
+	if (!rootId) {
+		rootId = crypto.randomUUID();
+		await client.execute({
+			sql: `INSERT INTO hierarchy_nodes (id, name, parent_id, created_at, updated_at)
+				VALUES (?, 'Vault', NULL, ?, ?)`,
+			args: [rootId, new Date().toISOString(), new Date().toISOString()]
+		});
+	}
+	await client.execute({ sql: 'UPDATE vault_items SET node_id = ? WHERE node_id IS NULL', args: [rootId] });
 }
 
 export function ensureDb() {
@@ -254,6 +295,120 @@ export async function setGroupMember(userId: string, groupId: string, enabled: b
 	}
 }
 
+async function grantsForNode(nodeId: string) {
+	const [users, groups] = await Promise.all([
+		client.execute({ sql: 'SELECT user_id FROM node_user_access WHERE node_id = ?', args: [nodeId] }),
+		client.execute({ sql: 'SELECT group_id FROM node_group_access WHERE node_id = ?', args: [nodeId] })
+	]);
+	return {
+		userIds: users.rows.map((row) => asString(row.user_id)),
+		groupIds: groups.rows.map((row) => asString(row.group_id))
+	};
+}
+
+async function allHierarchyAccessNodes(): Promise<HierarchyNodeAccess[]> {
+	const result = await client.execute('SELECT id, parent_id FROM hierarchy_nodes ORDER BY name');
+	return Promise.all(
+		result.rows.map(async (row) => ({
+			id: asString(row.id),
+			parentId: row.parent_id ? asString(row.parent_id) : null,
+			access: await grantsForNode(asString(row.id))
+		}))
+	);
+}
+
+export async function listHierarchyNodes(actor: VaultActor) {
+	await ensureDb();
+	const result = await client.execute('SELECT id, name, parent_id FROM hierarchy_nodes ORDER BY name');
+	const accessNodes = await allHierarchyAccessNodes();
+	const visibleItemNodes = new Set((await listVaultItems(actor)).map((item) => item.nodeId));
+	const visibleAncestors = new Set<string>();
+	const byId = new Map(accessNodes.map((node) => [node.id, node]));
+	for (const nodeId of visibleItemNodes) {
+		let current = nodeId ? byId.get(nodeId) : undefined;
+		while (current && !visibleAncestors.has(current.id)) {
+			visibleAncestors.add(current.id);
+			current = current.parentId ? byId.get(current.parentId) : undefined;
+		}
+	}
+
+	return Promise.all(
+		result.rows
+			.map((row) => ({
+				id: asString(row.id),
+				name: asString(row.name),
+				parentId: row.parent_id ? asString(row.parent_id) : null
+			}))
+			.filter(
+				(node) =>
+					actor.isSuperuser ||
+					visibleAncestors.has(node.id) ||
+					canAccessHierarchyNode(actor, accessNodes, node.id)
+			)
+			.map(async (node) => ({ ...node, access: await grantsForNode(node.id) }))
+	);
+}
+
+export async function createHierarchyNode(name: string, parentId: string | null) {
+	await ensureDb();
+	await client.execute({
+		sql: `INSERT INTO hierarchy_nodes (id, name, parent_id, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?)`,
+		args: [crypto.randomUUID(), name, parentId || null, new Date().toISOString(), new Date().toISOString()]
+	});
+}
+
+export async function updateHierarchyNode(input: { id: string; name: string; parentId: string | null }) {
+	await ensureDb();
+	const nodes = await allHierarchyAccessNodes();
+	if (wouldCreateHierarchyCycle(nodes, input.id, input.parentId)) {
+		throw new Error('Hierarchy node cannot be moved under itself or its descendants.');
+	}
+	await client.execute({
+		sql: 'UPDATE hierarchy_nodes SET name = ?, parent_id = ?, updated_at = ? WHERE id = ?',
+		args: [input.name, input.parentId || null, new Date().toISOString(), input.id]
+	});
+}
+
+export async function deleteHierarchyNode(nodeId: string) {
+	await ensureDb();
+	const [children, items] = await Promise.all([
+		client.execute({ sql: 'SELECT id FROM hierarchy_nodes WHERE parent_id = ? LIMIT 1', args: [nodeId] }),
+		client.execute({ sql: 'SELECT id FROM vault_items WHERE node_id = ? LIMIT 1', args: [nodeId] })
+	]);
+	if (children.rows[0] || items.rows[0]) {
+		throw new Error('Hierarchy node must be empty before deletion.');
+	}
+	await client.batch(
+		[
+			{ sql: 'DELETE FROM node_user_access WHERE node_id = ?', args: [nodeId] },
+			{ sql: 'DELETE FROM node_group_access WHERE node_id = ?', args: [nodeId] },
+			{ sql: 'DELETE FROM hierarchy_nodes WHERE id = ?', args: [nodeId] }
+		],
+		'write'
+	);
+}
+
+export async function setNodeUserAccess(nodeId: string, userId: string, enabled: boolean) {
+	await ensureDb();
+	await client.execute({
+		sql: enabled
+			? 'INSERT OR IGNORE INTO node_user_access (node_id, user_id) VALUES (?, ?)'
+			: 'DELETE FROM node_user_access WHERE node_id = ? AND user_id = ?',
+		args: [nodeId, userId]
+	});
+}
+
+export async function setNodeGroupAccess(nodeId: string, groupId: string, enabled: boolean) {
+	await ensureDb();
+	await client.execute({
+		sql: enabled
+			? 'INSERT OR IGNORE INTO node_group_access (node_id, group_id) VALUES (?, ?)'
+			: 'DELETE FROM node_group_access WHERE node_id = ? AND group_id = ?',
+		args: [nodeId, groupId]
+	});
+}
+
 export async function createVaultItem(input: {
 	title: string;
 	username: string;
@@ -261,13 +416,14 @@ export async function createVaultItem(input: {
 	url: string;
 	notes: string;
 	createdBy: string;
+	nodeId: string;
 }) {
 	await ensureDb();
 	const sealed = await encryptSecret(input.password, encryptionKey);
 	await client.execute({
 		sql: `INSERT INTO vault_items
-			(id, title, username, url, notes, secret_ciphertext, secret_iv, secret_tag, created_by, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(id, title, username, url, notes, secret_ciphertext, secret_iv, secret_tag, created_by, updated_at, node_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		args: [
 			crypto.randomUUID(),
 			input.title,
@@ -278,7 +434,8 @@ export async function createVaultItem(input: {
 			sealed.iv,
 			sealed.tag,
 			input.createdBy,
-			new Date().toISOString()
+			new Date().toISOString(),
+			input.nodeId
 		]
 	});
 }
@@ -290,6 +447,7 @@ export async function updateVaultItem(input: {
 	password?: string;
 	url: string;
 	notes: string;
+	nodeId: string;
 }) {
 	await ensureDb();
 	if (input.password) {
@@ -297,7 +455,7 @@ export async function updateVaultItem(input: {
 		await client.execute({
 			sql: `UPDATE vault_items
 				SET title = ?, username = ?, url = ?, notes = ?,
-					secret_ciphertext = ?, secret_iv = ?, secret_tag = ?, updated_at = ?
+					secret_ciphertext = ?, secret_iv = ?, secret_tag = ?, updated_at = ?, node_id = ?
 				WHERE id = ?`,
 			args: [
 				input.title,
@@ -308,6 +466,7 @@ export async function updateVaultItem(input: {
 				sealed.iv,
 				sealed.tag,
 				new Date().toISOString(),
+				input.nodeId,
 				input.id
 			]
 		});
@@ -315,8 +474,16 @@ export async function updateVaultItem(input: {
 	}
 
 	await client.execute({
-		sql: 'UPDATE vault_items SET title = ?, username = ?, url = ?, notes = ?, updated_at = ? WHERE id = ?',
-		args: [input.title, input.username, input.url, input.notes, new Date().toISOString(), input.id]
+		sql: 'UPDATE vault_items SET title = ?, username = ?, url = ?, notes = ?, updated_at = ?, node_id = ? WHERE id = ?',
+		args: [
+			input.title,
+			input.username,
+			input.url,
+			input.notes,
+			new Date().toISOString(),
+			input.nodeId,
+			input.id
+		]
 	});
 }
 
@@ -345,20 +512,25 @@ async function grantsForItem(itemId: string) {
 
 export async function listVaultItems(actor: VaultActor) {
 	await ensureDb();
+	const accessNodes = await allHierarchyAccessNodes();
 	const result = await client.execute('SELECT * FROM vault_items ORDER BY updated_at DESC');
 	const items = await Promise.all(
 		result.rows.map(async (row) => {
 			const id = asString(row.id);
 			const grants = await grantsForItem(id);
+			const nodeId = asString(row.node_id);
 			return {
 				id,
 				title: asString(row.title),
 				username: asString(row.username),
 				url: asString(row.url),
 				notes: asString(row.notes),
+				nodeId,
 				updatedAt: asString(row.updated_at),
 				access: grants,
-				canAccess: canAccessVaultItem(actor, grants)
+				canAccess:
+					canAccessVaultItem(actor, grants) ||
+					canAccessHierarchyNode(actor, accessNodes, nodeId)
 			};
 		})
 	);
@@ -371,7 +543,13 @@ export async function revealSecret(actor: VaultActor, itemId: string) {
 	const row = result.rows[0];
 	if (!row) return null;
 	const grants = await grantsForItem(itemId);
-	if (!canAccessVaultItem(actor, grants)) return null;
+	const accessNodes = await allHierarchyAccessNodes();
+	if (
+		!canAccessVaultItem(actor, grants) &&
+		!canAccessHierarchyNode(actor, accessNodes, asString(row.node_id))
+	) {
+		return null;
+	}
 	return await decryptSecret(
 		{
 			ciphertext: asString(row.secret_ciphertext),
